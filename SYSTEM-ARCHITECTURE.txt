@@ -1,0 +1,29 @@
+System architecture
+
+As part of the STARTUP empirical database infrastructure, the system uses WordPress as a lightweight backend for user authentication, structured data entry, and team-based collaboration. The architecture is modular, with separate PHP components managing content types, access control, and user workflows.
+
+The platform defines two core data objects — LCP Entries and City Data — which share a consistent metadata structure based on the common research template (including fields such as location, description, partners, and temporal scope). This ensures comparability of empirical data across participating teams and cities.
+
+Structured input interfaces are implemented using the Advanced Custom Fields (ACF) plugin. Administrators configure field groups per post type to enforce a unified schema throughout the consortium. Spatial data such as project locations are handled through a Google Maps field integrated with ACF, enabling address search and coordinate storage directly within the WordPress environment.
+
+User registration and access control are based on team affiliation. Each team receives a unique invitation code, linking users to their respective group upon registration. Contributors can view and edit entries created by their own team, while administrators have system-wide access. This logic combines WordPress’ built-in roles and capabilities with metadata-based filtering.
+
+Additional project-specific functionality, including dashboard configuration, metadata validation, and API key registration, extends the core WordPress framework. Custom dashboard widgets provide contextual documentation and step-by-step instructions for contributors.
+
+Data flow and storage
+
+All information is stored in WordPress’ native MySQL database (tables wp_posts and wp_postmeta). Entries are saved as drafts and remain unpublished, keeping all content within the administrative interface. The system is fully self-contained and does not connect to external APIs.
+
+Each metadata field is stored and retrieved using standard WordPress functions. The data model ensures long-term stability, traceability, and reproducibility within a single controlled environment.
+
+Access and privacy
+
+The system enforces data minimisation and access restrictions in line with GDPR principles. Team-level visibility is achieved through metadata-based query filtering and role checks. Only administrators have global access to all entries, while contributors are restricted to records associated with their team.
+
+Backup and recovery
+
+The hosting environment performs full offsite backups every night, retaining them for 30 days. All data are stored within the European Union to ensure compliance with applicable data protection regulations. Restorations can be initiated directly via the JetBackup interface or through a formal support request.
+
+Output and analysis
+
+Administrators can export structured datasets directly from the system in CSV format. These exports can be used for comparative analysis, aggregation, or integration with mapping and statistical frameworks. No personal or authentication data are included, ensuring anonymised and reproducible datasets.
