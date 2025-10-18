@@ -9,7 +9,8 @@ Team-based Entry System — WordPress Theme: `lcp`
 
 ## Purpose
 
-Provides a WordPress-based system for data entry and export used in the STARTUP empirical database “Local Cultural Practices” (LCP). It supports collaborative documentation and analysis in a private, team-based environment.
+Provides a WordPress-based system for data entry and export used in the STARTUP empirical database “Local Cultural Practices” (LCP).  
+It supports collaborative documentation and analysis in a private, team-based environment.
 
 It provides a **private, team-based workspace** where contributors collect, structure, and maintain data about local cultural practices in European cities.  
 The system is admin-only and not publicly accessible — all activity happens inside the WordPress dashboard.
@@ -75,7 +76,8 @@ add_action('acf/init', 'lcp_acf_init');
 
 ## Output & Analysis
 
-Data can be exported via the admin tool (CSV) and used in external analytical workflows or mapping frameworks. The export uses a private REST endpoint behind admin permissions.
+Data can be exported via the admin tool (CSV) and used in external analytical workflows or mapping frameworks.  
+The export uses a private REST endpoint behind admin permissions.
 
 ---
 
@@ -122,10 +124,10 @@ Data collected through this system falls under **CC BY 4.0** — see `LICENSE-DA
 
 If you use this system, please cite:
 
-> **STARTUP. (2025).**  
+> **STARTUP (2025)**  
 > *startup-lcp-system: Local Cultural Practices — WordPress-based team data collection system* [Software].  
 > *In Sustainable Transitions. Action Research and Training in Urban Perspective (STARTUP).*  
-> https://github.com/Liistamo/startup-lcp-system
+> [https://github.com/Liistamo/startup-lcp-system](https://github.com/Liistamo/startup-lcp-system)
 
 **Contact:** magnus.liistamo@humangeo.su.se
 
@@ -134,3 +136,6 @@ If you use this system, please cite:
 ## EU Funding Acknowledgement
 
 This project has received funding from the **European Union’s Horizon Europe** research and innovation programme under **Grant Agreement No. 101178523**.
+
+Views and opinions expressed are those of the author(s) only and do not necessarily reflect those of the European Union or the granting authority.  
+Neither the European Union nor the granting authority can be held responsible for them.
