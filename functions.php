@@ -139,23 +139,33 @@ function lcp_clean_up_dashboard() {
 /* -----------------------------------------------------------------------------
  * 9) ADVANCED CUSTOM FIELDS (ACF) — GOOGLE MAPS API
  * -------------------------------------------------------------------------- */
-
 /**
  * Registers the Google Maps API key for use in ACF’s Google Map field.
  *
  * SECURITY & DEPLOYMENT
+ * - The key is loaded from the .env file, not hardcoded.
  * - The key must be restricted in Google Cloud Console:
- *   * Application restrictions: HTTP referrers only (e.g. your domain URLs)
+ *   * Application restrictions: HTTP referrers only (your domain URLs)
  *   * API restrictions: “Maps JavaScript API” (and optionally “Places API”)
  *
  * VISIBILITY
- * - The key is intentionally public, since ACF loads Maps JS client-side.
- * - This function only stores it in WordPress settings; ACF handles output.
+ * - The key is public client-side when ACF loads the Google Maps JavaScript.
  *
  * REFERENCE
  * @link https://www.advancedcustomfields.com/resources/google-map/
  */
 function lcp_acf_init() {
-    acf_update_setting('google_api_key', 'AIzaSyBgU2aN2H5_FNch5kbhIeQOugWYsWimf54'); 
+    // Load environment variables if not already loaded
+    if (file_exists(__DIR__ . '/.env')) {
+        $dotenv = Dotenv\Dotenv::createImmutable(__DIR__);
+        $dotenv->load();
+    }
+
+    // Get API key from .env
+    $api_key = getenv('ACF_GOOGLE_MAPS_API_KEY');
+
+    if ($api_key) {
+        acf_update_setting('google_api_key', $api_key);
+    }
 }
 add_action('acf/init', 'lcp_acf_init');

@@ -54,6 +54,55 @@
     if (el) el.textContent = msg;
   }
 
+  // --- Link normalisation helpers ------------------------------------------
+
+  // Best effort: parse JSON safely
+  function tryParseJSON(s) {
+    if (typeof s !== 'string') return null;
+    const t = s.trim();
+    if (!t.startsWith('{') || t.length < 5) return null;
+    try { return JSON.parse(t); } catch { return null; }
+  }
+
+  // Clean URL for export/preview
+  function cleanUrl(u) {
+    if (typeof u !== 'string') return u;
+    // Unescape JSON \/ to normal /
+    let v = u.replace(/\\\//g, '/').trim();
+    // Normalise accidental backslashes (https:\\ → https://)
+    v = v.replace(/^https:\\\\/, 'https://').replace(/^http:\\\\/, 'http://');
+    // Remove trailing slash (optional; comment out if you want to keep it)
+    v = v.replace(/\/+$/, '');
+    return v;
+  }
+
+  // If value is an ACF "Link" (object with url/title/target) → return plain URL.
+  // Handles both real objects and JSON-encoded strings.
+  function extractLinkUrl(value) {
+    // Object form (from backend)?
+    if (value && typeof value === 'object' && 'url' in value) {
+      return cleanUrl(String(value.url || ''));
+    }
+    // String-JSON form?
+    if (typeof value === 'string' && value.includes('"url"')) {
+      const obj = tryParseJSON(value);
+      if (obj && typeof obj.url === 'string') {
+        return cleanUrl(obj.url);
+      }
+    }
+    // Not a link object → return original
+    return value;
+  }
+
+  // Walk a row and replace any ACF link value with its plain URL
+  function normaliseLinkFieldsInRow(row) {
+    const out = {};
+    for (const k of Object.keys(row)) {
+      out[k] = extractLinkUrl(row[k]);
+    }
+    return out;
+  }
+
   /**
    * Fetch ONE page of rows from the private REST endpoint.
    * Used for the small preview (first 20 rows).
@@ -77,7 +126,13 @@
 
     const res = await fetch(url.toString(), { headers: { 'X-WP-Nonce': LCP_EXPORT?.rest?.nonce || '' } });
     if (!res.ok) throw new Error('Fetch failed: ' + res.status);
-    return res.json();
+
+    const json = await res.json();
+    // normalise ACF Link fields to plain URL for preview
+    if (Array.isArray(json.rows)) {
+      json.rows = json.rows.map(normaliseLinkFieldsInRow);
+    }
+    return json;
   }
 
   /**
@@ -107,7 +162,10 @@
       if (!res.ok) throw new Error('Fetch failed: ' + res.status);
       const json = await res.json();
 
-      all = all.concat(json.rows || []);
+      // NEW: normalise ACF Link fields to plain URL before appending
+      const pageRows = Array.isArray(json.rows) ? json.rows.map(normaliseLinkFieldsInRow) : [];
+      all = all.concat(pageRows);
+
       maxPages = json.pagination?.max_pages || 1;
       total = json.pagination?.total || all.length;
       paged++;

@@ -20,7 +20,10 @@
  */
 
 if (!defined('ABSPATH')) exit;
-
+// Enable full raw mode for debugging (true = skip all normalisation)
+if (!defined('LCP_EXPORT_DEBUG_RAW')) {
+    define('LCP_EXPORT_DEBUG_RAW', false);
+}
 /* -------------------------------------------------------------------------
  * Utility: Collect distinct team labels from user meta 'lcp_team'
  * -------------------------------------------------------------------------
@@ -225,6 +228,15 @@ function lcp_expand_acf_map_array(&$row, $key, $maybe) {
     return $has_any;
 }
 
+/**
+ * Check if a numeric value is a valid attachment ID.
+ * 
+ */
+function lcp_is_attachment_id($maybe_id) {
+    if (!is_numeric($maybe_id)) return false;
+    $p = get_post((int)$maybe_id);
+    return $p && $p->post_type === 'attachment';
+}
 /* -------------------------------------------------------------------------
  * Main REST callback
  * ------------------------------------------------------------------------- */
@@ -281,6 +293,22 @@ function lcp_export_rest_entries( WP_REST_Request $req ) {
             // Normalize to single value if single meta
             $val = count($vals) === 1 ? $vals[0] : $vals;
 
+            // DEBUG RAW MODE:
+            // - Do NOT expand ACF Google Map into columns
+            // - Do NOT implode checkbox arrays
+            // - Do NOT JSON-encode arrays to strings
+            // - Prefer ACF raw value (unformatted) when available; otherwise use post meta as-is
+            // --- DEBUG RAW MODE ---------------------------------------------------
+            if (LCP_EXPORT_DEBUG_RAW) {
+              if (function_exists('get_field')) {
+                  // ACF raw (format_value = false) gives the stored value as PHP types (arrays/IDs), great for debugging
+                  $acf_raw = get_field($k, $id, false);
+                  // get_field() returns null for non-ACF keys; in that case fall back to post meta
+                  $val = (null !== $acf_raw) ? $acf_raw : $val;
+              }
+              // Assign raw value directly; arrays/objects stay arrays (will become JSON in REST output)
+              $row[$k] = $val;
+            }
             // If PHP-serialized string -> decode
             if (is_string($val) && lcp_is_serialized_array_string($val)) {
                 $decoded = @maybe_unserialize($val);
@@ -299,6 +327,13 @@ function lcp_export_rest_entries( WP_REST_Request $req ) {
                 } else {
                     $val = (string)$decoded;
                 }
+            }
+
+            // If numeric and looks like attachment ID → prepare attachment data replcde with array
+            if (is_numeric($val) && lcp_is_attachment_id($val)) {
+                $prepared = wp_prepare_attachment_for_js((int)$val);
+                $row[$k] = $prepared ?: (int)$val; // fallback till ID om något strular
+                continue;
             }
 
             // If ACF returns array (e.g., repeater/relationship) -> JSON encode
