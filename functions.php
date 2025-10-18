@@ -155,16 +155,20 @@ function lcp_clean_up_dashboard() {
  * @link https://www.advancedcustomfields.com/resources/google-map/
  */
 function lcp_acf_init() {
-    // Load environment variables if not already loaded
-    if (file_exists(__DIR__ . '/.env')) {
-        $dotenv = Dotenv\Dotenv::createImmutable(__DIR__);
-        $dotenv->load();
+    $env_path = __DIR__ . '/.env';
+    $api_key = '';
+
+    if (file_exists($env_path)) {
+        $lines = file($env_path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        foreach ($lines as $line) {
+            if (strpos(trim($line), 'ACF_GOOGLE_MAPS_API_KEY=') === 0) {
+                $api_key = trim(substr($line, strlen('ACF_GOOGLE_MAPS_API_KEY=')));
+                break;
+            }
+        }
     }
 
-    // Get API key from .env
-    $api_key = getenv('ACF_GOOGLE_MAPS_API_KEY');
-
-    if ($api_key) {
+    if ($api_key !== '') {
         acf_update_setting('google_api_key', $api_key);
     }
 }

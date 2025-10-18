@@ -237,6 +237,69 @@ function lcp_is_attachment_id($maybe_id) {
     $p = get_post((int)$maybe_id);
     return $p && $p->post_type === 'attachment';
 }
+
+/* -------------------------------------------------------------------------
+ * URL extraction helpers for export
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Best-effort: return a URL string if $v represents a link/media object.
+ * Supports:
+ *  - {"title":"","url":"https://...","target":""}
+ *  - wp_prepare_attachment_for_js()-liknande arr med 'url' eller sizes.full.url
+ *  - generella arr med top-level 'url'
+ */
+function lcp_extract_url_from_array($arr) {
+    if (!is_array($arr)) return null;
+
+    // Exact/simple “Link” object pattern
+    if (array_key_exists('url', $arr) && is_string($arr['url']) && $arr['url'] !== '') {
+        return $arr['url'];
+    }
+
+    // Media/attachment-like: prefer sizes.full.url → fallback till url om finns djupare
+    if (isset($arr['sizes']) && is_array($arr['sizes'])) {
+        if (isset($arr['sizes']['full']['url']) && is_string($arr['sizes']['full']['url']) && $arr['sizes']['full']['url'] !== '') {
+            return $arr['sizes']['full']['url'];
+        }
+        // Annars försök hitta första sizes[*].url
+        foreach ($arr['sizes'] as $s) {
+            if (is_array($s) && isset($s['url']) && is_string($s['url']) && $s['url'] !== '') {
+                return $s['url'];
+            }
+        }
+    }
+
+    // Ibland ligger original-URL på toppnivån men under annat namn; hantera vanligt 'link'
+    if (isset($arr['link']) && is_string($arr['link']) && $arr['link'] !== '') {
+        return $arr['link'];
+    }
+
+    return null;
+}
+
+/**
+ * Om strängen ser ut som JSON-objekt/array: json_decode och prova extract.
+ */
+function lcp_try_extract_url_from_json_string($maybe_json_str) {
+    if (!is_string($maybe_json_str)) return null;
+    $s = ltrim($maybe_json_str);
+    if ($s === '' || ($s[0] !== '{' && $s[0] !== '[')) return null;
+
+    $decoded = json_decode($maybe_json_str, true);
+    if (json_last_error() !== JSON_ERROR_NONE) return null;
+
+    // Om det är en array av objekt, försök hämta url från första objektet
+    if (is_array($decoded) && array_keys($decoded) === range(0, count($decoded)-1)) {
+        foreach ($decoded as $item) {
+            $u = lcp_extract_url_from_array($item);
+            if (is_string($u)) return $u;
+        }
+        return null;
+    }
+
+    return lcp_extract_url_from_array($decoded);
+}
 /* -------------------------------------------------------------------------
  * Main REST callback
  * ------------------------------------------------------------------------- */
@@ -329,15 +392,42 @@ function lcp_export_rest_entries( WP_REST_Request $req ) {
                 }
             }
 
-            // If numeric and looks like attachment ID → prepare attachment data replcde with array
+            // If numeric and looks like attachment ID → prepare attachment data
             if (is_numeric($val) && lcp_is_attachment_id($val)) {
                 $prepared = wp_prepare_attachment_for_js((int)$val);
-                $row[$k] = $prepared ?: (int)$val; // fallback till ID om något strular
+
+                // ✨ NYTT: exportera endast URL om möjligt
+                if (is_array($prepared)) {
+                    $maybe_url = lcp_extract_url_from_array($prepared);
+                    if (is_string($maybe_url)) {
+                        $row[$k] = $maybe_url;
+                    } else {
+                        // Fallback: original 'url' om finns
+                        $row[$k] = isset($prepared['url']) ? $prepared['url'] : (int)$val;
+                    }
+                } else {
+                    $row[$k] = (int)$val; // nödfallback
+                }
                 continue;
             }
 
-            // If ACF returns array (e.g., repeater/relationship) -> JSON encode
+            // ✨ NYTT: om värdet är en JSON-sträng för link/media → exportera bara URL
+            if (is_string($val)) {
+                $maybe_url = lcp_try_extract_url_from_json_string($val);
+                if (is_string($maybe_url)) {
+                    $row[$k] = $maybe_url;
+                    continue;
+                }
+            }
+
+            // ✨ NYTT: om värdet redan är array (ACF returnerar arr) → försök hämta URL
             if (is_array($val)) {
+                $maybe_url = lcp_extract_url_from_array($val);
+                if (is_string($maybe_url)) {
+                    $row[$k] = $maybe_url;
+                    continue;
+                }
+                // tidigare beteende: JSON-koda arrays
                 $row[$k] = wp_json_encode($val, JSON_UNESCAPED_UNICODE);
             } else {
                 $row[$k] = $val;
