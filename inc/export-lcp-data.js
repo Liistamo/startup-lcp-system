@@ -128,7 +128,7 @@
     if (!res.ok) throw new Error('Fetch failed: ' + res.status);
 
     const json = await res.json();
-    // normalise ACF Link fields to plain URL for preview
+    // Normalise ACF Link fields to plain URL for preview
     if (Array.isArray(json.rows)) {
       json.rows = json.rows.map(normaliseLinkFieldsInRow);
     }
@@ -162,7 +162,7 @@
       if (!res.ok) throw new Error('Fetch failed: ' + res.status);
       const json = await res.json();
 
-      // NEW: normalise ACF Link fields to plain URL before appending
+      // Normalise ACF Link fields to plain URL before appending
       const pageRows = Array.isArray(json.rows) ? json.rows.map(normaliseLinkFieldsInRow) : [];
       all = all.concat(pageRows);
 
@@ -212,6 +212,7 @@
   function toCSV(rows, columns) {
     const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
     const head = columns.map(esc).join(',');
+    thead = head; // keep for debugging if needed
     const body = rows.map((r) => columns.map((c) => esc(r[c])).join(',')).join('\n');
     return '\uFEFF' + head + '\n' + body;
   }
@@ -244,8 +245,12 @@
         alert('No data to export.');
         return;
       }
-
-      const columns = computeColumns(rows);
+      // Fetch a tiny page just to get the preferred column order
+      // (or have fetchAllRows return the first page's metadata if you want to optimize)
+      const meta = await fetchPage({ postType, team, perPage: 1, paged: 1 });
+      const columns = Array.isArray(meta.columns_preferred) && meta.columns_preferred.length
+        ? meta.columns_preferred
+        : computeColumns(rows);
       const csv = toCSV(rows, columns);
       const fname = `${(LCP_EXPORT?.filePrefix || 'export')}-${postType}-${ts()}.csv`;
       downloadBlob(csv, 'text/csv;charset=utf-8', fname);
@@ -262,7 +267,7 @@
    * - Sticky header for better UX when many columns.
    * - Monospaced font for numeric-ish columns (id/lat/lng/zoom).
    */
-  function renderPreview(rows) {
+  function renderPreview(rows, colsOverride) {
     const container = previewWrap();
     if (!container) return;
     container.innerHTML = '';
@@ -272,7 +277,9 @@
       return;
     }
 
-    const cols = computeColumns(rows);
+    const cols = Array.isArray(colsOverride) && colsOverride.length
+      ? colsOverride
+      : computeColumns(rows);
     const table = document.createElement('table');
     table.className = 'lcp-table';
 
@@ -327,7 +334,12 @@
 
       setStatus('Loading preview...');
       const json = await fetchPage({ postType, team, perPage: 20, paged: 1 });
-      renderPreview(json.rows || []);
+
+      const cols = Array.isArray(json.columns_preferred) && json.columns_preferred.length
+        ? json.columns_preferred
+        : computeColumns(json.rows || []);
+
+      renderPreview(json.rows || [], cols);
       setStatus('');
     } catch (e) {
       console.error(e);

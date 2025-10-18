@@ -10,9 +10,8 @@
  *   Therefore, when a team filter is applied, we translate it to author__in based on users
  *   whose lcp_team matches the selected value.
  * - We keep the output generic: always include id, title, team (derived from author),
- *   then add all non-internal post meta (keys not starting with "_"). For ACF Google Map
- *   stored as a serialized array, we expand into individual columns (<meta>_address, _lat, etc.).
- * - Only CSV export is provided (no Excel dependency).
+ *   then add all non-internal post meta (keys not starting with "_"). For ACF Google Map we only export <meta>_lat and <meta>_lng.
+ * - CSV export is provided.
  *
  * Reproducibility:
  * - This code uses core WordPress APIs (admin_menu, WP_Query, register_rest_route, get_users).
@@ -207,30 +206,23 @@ function lcp_is_serialized_array_string($val) {
 }
 
 /**
- * Detect ACF Google Map stored as serialized array and expand to columns.
- * Returns true if handled, false otherwise.
+ * Extract only lat/lng from an ACF Google Map array.
+ * Returns true if handled (so original value won't be kept).
  */
 function lcp_expand_acf_map_array(&$row, $key, $maybe) {
     if (!is_array($maybe)) return false;
 
-    $map_keys = [
-        'address','lat','lng','zoom','place_id','name',
-        'street_number','street_name','city','state','post_code','country','country_short'
-    ];
-
-    $has_any = false;
-    foreach ($map_keys as $mk) {
-        if (array_key_exists($mk, $maybe)) {
-            $row[$key . '_' . $mk] = is_scalar($maybe[$mk]) ? (string)$maybe[$mk] : wp_json_encode($maybe[$mk], JSON_UNESCAPED_UNICODE);
-            $has_any = true;
-        }
+    if (isset($maybe['lat']) && isset($maybe['lng'])) {
+        $row[$key . '_lat'] = (string)$maybe['lat'];
+        $row[$key . '_lng'] = (string)$maybe['lng'];
+        return true;
     }
-    return $has_any;
+
+    return false;
 }
 
 /**
  * Check if a numeric value is a valid attachment ID.
- * 
  */
 function lcp_is_attachment_id($maybe_id) {
     if (!is_numeric($maybe_id)) return false;
@@ -246,8 +238,8 @@ function lcp_is_attachment_id($maybe_id) {
  * Best-effort: return a URL string if $v represents a link/media object.
  * Supports:
  *  - {"title":"","url":"https://...","target":""}
- *  - wp_prepare_attachment_for_js()-liknande arr med 'url' eller sizes.full.url
- *  - generella arr med top-level 'url'
+ *  - Array similar to wp_prepare_attachment_for_js() with 'url' or sizes.full.url
+ *  - Generic arrays with a top-level 'url'
  */
 function lcp_extract_url_from_array($arr) {
     if (!is_array($arr)) return null;
@@ -257,12 +249,11 @@ function lcp_extract_url_from_array($arr) {
         return $arr['url'];
     }
 
-    // Media/attachment-like: prefer sizes.full.url → fallback till url om finns djupare
+    // Media/attachment-like: prefer sizes.full.url → fallback to the first sizes[*].url
     if (isset($arr['sizes']) && is_array($arr['sizes'])) {
         if (isset($arr['sizes']['full']['url']) && is_string($arr['sizes']['full']['url']) && $arr['sizes']['full']['url'] !== '') {
             return $arr['sizes']['full']['url'];
         }
-        // Annars försök hitta första sizes[*].url
         foreach ($arr['sizes'] as $s) {
             if (is_array($s) && isset($s['url']) && is_string($s['url']) && $s['url'] !== '') {
                 return $s['url'];
@@ -270,7 +261,7 @@ function lcp_extract_url_from_array($arr) {
         }
     }
 
-    // Ibland ligger original-URL på toppnivån men under annat namn; hantera vanligt 'link'
+    // Sometimes the original URL lives under 'link'
     if (isset($arr['link']) && is_string($arr['link']) && $arr['link'] !== '') {
         return $arr['link'];
     }
@@ -279,7 +270,7 @@ function lcp_extract_url_from_array($arr) {
 }
 
 /**
- * Om strängen ser ut som JSON-objekt/array: json_decode och prova extract.
+ * If the string looks like JSON (object/array), decode and try to extract a URL.
  */
 function lcp_try_extract_url_from_json_string($maybe_json_str) {
     if (!is_string($maybe_json_str)) return null;
@@ -289,7 +280,7 @@ function lcp_try_extract_url_from_json_string($maybe_json_str) {
     $decoded = json_decode($maybe_json_str, true);
     if (json_last_error() !== JSON_ERROR_NONE) return null;
 
-    // Om det är en array av objekt, försök hämta url från första objektet
+    // If it is an array of objects, try the first item with a URL
     if (is_array($decoded) && array_keys($decoded) === range(0, count($decoded)-1)) {
         foreach ($decoded as $item) {
             $u = lcp_extract_url_from_array($item);
@@ -300,6 +291,62 @@ function lcp_try_extract_url_from_json_string($maybe_json_str) {
 
     return lcp_extract_url_from_array($decoded);
 }
+
+/**
+ * Return ACF field names in the UI order for a post type.
+ * Requires ACF. Falls back to [] if ACF not present.
+ */
+function lcp_get_acf_field_names_in_order_for_post_type($post_type) {
+    if (!function_exists('acf_get_field_groups') || !function_exists('acf_get_fields')) {
+        return [];
+    }
+    $ordered = [];
+
+    $groups = acf_get_field_groups(['post_type' => $post_type]);
+    foreach ($groups as $group) {
+        $fields = acf_get_fields($group);
+        if (!$fields || !is_array($fields)) continue;
+
+        foreach ($fields as $f) {
+            if (!empty($f['name']) && $f['name'][0] !== '_') {
+                $ordered[] = $f['name'];
+            }
+        }
+    }
+
+    // Unique, keep first-seen order
+    $seen = [];
+    $uniq = [];
+    foreach ($ordered as $name) {
+        if (!isset($seen[$name])) {
+            $seen[$name] = true;
+            $uniq[] = $name;
+        }
+    }
+    return $uniq;
+}
+
+/**
+ * Return ACF google_map field names for a post type (UI order).
+ */
+function lcp_get_acf_map_field_names($post_type) {
+    if (!function_exists('acf_get_field_groups') || !function_exists('acf_get_fields')) {
+        return [];
+    }
+    $maps = [];
+    $groups = acf_get_field_groups(['post_type' => $post_type]);
+    foreach ($groups as $group) {
+        $fields = acf_get_fields($group);
+        if (!$fields || !is_array($fields)) continue;
+        foreach ($fields as $f) {
+            if (!empty($f['name']) && ($f['type'] ?? '') === 'google_map') {
+                $maps[] = $f['name'];
+            }
+        }
+    }
+    return $maps;
+}
+
 /* -------------------------------------------------------------------------
  * Main REST callback
  * ------------------------------------------------------------------------- */
@@ -357,25 +404,19 @@ function lcp_export_rest_entries( WP_REST_Request $req ) {
             $val = count($vals) === 1 ? $vals[0] : $vals;
 
             // DEBUG RAW MODE:
-            // - Do NOT expand ACF Google Map into columns
-            // - Do NOT implode checkbox arrays
-            // - Do NOT JSON-encode arrays to strings
-            // - Prefer ACF raw value (unformatted) when available; otherwise use post meta as-is
-            // --- DEBUG RAW MODE ---------------------------------------------------
             if (LCP_EXPORT_DEBUG_RAW) {
-              if (function_exists('get_field')) {
-                  // ACF raw (format_value = false) gives the stored value as PHP types (arrays/IDs), great for debugging
-                  $acf_raw = get_field($k, $id, false);
-                  // get_field() returns null for non-ACF keys; in that case fall back to post meta
-                  $val = (null !== $acf_raw) ? $acf_raw : $val;
-              }
-              // Assign raw value directly; arrays/objects stay arrays (will become JSON in REST output)
-              $row[$k] = $val;
+                if (function_exists('get_field')) {
+                    $acf_raw = get_field($k, $id, false);
+                    $val = (null !== $acf_raw) ? $acf_raw : $val;
+                }
+                $row[$k] = $val;
+                continue; // do not normalize/expand in RAW mode
             }
+
             // If PHP-serialized string -> decode
             if (is_string($val) && lcp_is_serialized_array_string($val)) {
                 $decoded = @maybe_unserialize($val);
-                // If decoded looks like an ACF Map array -> expand
+                // If decoded looks like an ACF Map array -> expand (only lat/lng)
                 if (is_array($decoded) && lcp_expand_acf_map_array($row, $k, $decoded)) {
                     continue;
                 }
@@ -396,22 +437,22 @@ function lcp_export_rest_entries( WP_REST_Request $req ) {
             if (is_numeric($val) && lcp_is_attachment_id($val)) {
                 $prepared = wp_prepare_attachment_for_js((int)$val);
 
-                // ✨ NYTT: exportera endast URL om möjligt
+                // Export only URL when possible
                 if (is_array($prepared)) {
                     $maybe_url = lcp_extract_url_from_array($prepared);
                     if (is_string($maybe_url)) {
                         $row[$k] = $maybe_url;
                     } else {
-                        // Fallback: original 'url' om finns
+                        // Fallback: original 'url' if present
                         $row[$k] = isset($prepared['url']) ? $prepared['url'] : (int)$val;
                     }
                 } else {
-                    $row[$k] = (int)$val; // nödfallback
+                    $row[$k] = (int)$val; // emergency fallback
                 }
                 continue;
             }
 
-            // ✨ NYTT: om värdet är en JSON-sträng för link/media → exportera bara URL
+            // If the value is a JSON string representing link/media → export only the URL
             if (is_string($val)) {
                 $maybe_url = lcp_try_extract_url_from_json_string($val);
                 if (is_string($maybe_url)) {
@@ -420,14 +461,14 @@ function lcp_export_rest_entries( WP_REST_Request $req ) {
                 }
             }
 
-            // ✨ NYTT: om värdet redan är array (ACF returnerar arr) → försök hämta URL
+            // If the value is already an array (ACF returns arrays) → try extracting a URL
             if (is_array($val)) {
                 $maybe_url = lcp_extract_url_from_array($val);
                 if (is_string($maybe_url)) {
                     $row[$k] = $maybe_url;
                     continue;
                 }
-                // tidigare beteende: JSON-koda arrays
+                // Previous behavior: JSON-encode arrays
                 $row[$k] = wp_json_encode($val, JSON_UNESCAPED_UNICODE);
             } else {
                 $row[$k] = $val;
@@ -437,9 +478,90 @@ function lcp_export_rest_entries( WP_REST_Request $req ) {
         $rows[] = $row;
     }
 
+    // ------------------- Build preferred column order ------------------------
+    // 1) ACF UI order for this post type
+    $acf_order = function_exists('lcp_get_acf_field_names_in_order_for_post_type')
+        ? lcp_get_acf_field_names_in_order_for_post_type($post_type)
+        : [];
+
+    // 2) All keys present in data
+    $all_keys = [];
+    foreach ($rows as $r) {
+        foreach (array_keys($r) as $k) {
+            $all_keys[$k] = true;
+        }
+    }
+
+    // 3) Derived map keys: <base>_{lat|lng}
+    $derived = []; // base => ['lat' => 'base_lat', 'lng' => 'base_lng']
+    foreach (array_keys($all_keys) as $k) {
+        if (preg_match('/^(.+?)_(lat|lng)$/', $k, $m)) {
+            $base = $m[1];
+            $part = $m[2]; // 'lat' or 'lng'
+            if (!isset($derived[$base])) $derived[$base] = [];
+            $derived[$base][$part] = $k;
+        }
+    }
+
+    // 4) Seed with core columns
+    $seen = [];
+    $preferred = [];
+    foreach (['id','title','team'] as $core) {
+        if (isset($all_keys[$core]) && !isset($seen[$core])) {
+            $preferred[] = $core;
+            $seen[$core] = true;
+        }
+    }
+
+    // 5) Walk ACF order; always include base; for map fields also include base_lat/base_lng
+    $acf_map_fields = function_exists('lcp_get_acf_map_field_names')
+        ? lcp_get_acf_map_field_names($post_type)
+        : [];
+    $acf_map_lookup = array_flip($acf_map_fields);
+
+    foreach ($acf_order as $field) {
+        // Always include the base field (even if it doesn't appear in data)
+        if (empty($seen[$field])) {
+            $preferred[] = $field;
+            $seen[$field] = true;
+        }
+
+        // For Google Map fields, include <field>_lat and <field>_lng right after the base field
+        if (isset($acf_map_lookup[$field])) {
+            foreach (['lat','lng'] as $p) {
+                $col = "{$field}_{$p}";
+                if (empty($seen[$col])) {
+                    $preferred[] = $col;
+                    $seen[$col] = true;
+                }
+            }
+        } elseif (isset($derived[$field])) {
+            // If data actually contains derived lat/lng for a non-map field, respect them
+            foreach (['lat','lng'] as $p) {
+                if (isset($derived[$field][$p])) {
+                    $col = $derived[$field][$p];
+                    if (empty($seen[$col])) {
+                        $preferred[] = $col;
+                        $seen[$col] = true;
+                    }
+                }
+            }
+        }
+    }
+
+    // 6) Append any remaining keys (stable, first-seen)
+    foreach (array_keys($all_keys) as $k) {
+        if (empty($seen[$k])) {
+            $preferred[] = $k;
+            $seen[$k] = true;
+        }
+    }
+
+    // ------------------- Response -------------------------------------------
     $resp = [
-        'rows'       => $rows,
-        'pagination' => [
+        'rows'              => $rows,
+        'columns_preferred' => $preferred,
+        'pagination'        => [
             'paged'     => (int)$paged,
             'per_page'  => (int)$per_page,
             'total'     => (int)$wpq->found_posts,
